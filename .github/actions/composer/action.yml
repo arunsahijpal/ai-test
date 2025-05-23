@@ -1,0 +1,38 @@
+name: "Composer"
+description: "Runs a PHP setup with composer validate and composer install"
+inputs:
+  php_version:
+    description: "PHP Version to run."
+    default: "8.2"
+  composer_version:
+    description: "Composer version to run."
+    default: "2"
+runs:
+  using: "composite"
+  steps:
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php_version }}
+        extensions: gd
+
+    - name: Validate composer.json
+      shell: bash
+      run: composer validate --no-check-all
+
+    - name: Clear Composer Cache
+      shell: bash
+      run: composer clear-cache
+
+    - name: Check composer.lock
+      shell: bash
+      run: |
+        composer install --dry-run
+        if [ $? -ne 0 ]; then
+          echo "composer.lock is out of date. Please run 'composer update' to generate an updated lock file."
+          exit 1
+        fi
+
+    - name: Install dependencies
+      shell: bash
+      run: composer install --no-interaction --prefer-dist --ansi

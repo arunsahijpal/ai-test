@@ -1,0 +1,104 @@
+name: Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches: [main]
+
+env:
+  PHP_VERSION: "8.3"
+  COMPOSER_VERSION: "2.7.2"
+
+jobs:
+  run-phpcs:
+    runs-on: ubuntu-latest
+    # Disabling the job for Draft pull requests.
+    if: github.event.pull_request.draft == false
+    # Setting GitHub token to use GitHub CLI.
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      # Using our custom composite action to run composer checks and composer install.
+      - name: Composer validate and install
+        uses: ./.github/actions/composer
+        id: composer
+        with:
+          php_version: ${{ env.PHP_VERSION }}
+          composer_version: ${{ env.COMPOSER_VERSION }}
+
+      # We are using phpcs.xml.dist from the project root to determine --extension list, ignores and Drupal,
+      # DrupalPractice standards.
+      - name: Run PHPCS on Pull Request Files
+        run: |
+          gh pr diff ${{ github.event.number }} --name-only | xargs find 2> /dev/null | xargs vendor/bin/phpcs -nq
+
+  run-phpstan:
+    runs-on: ubuntu-latest
+    # Disabling the job for Draft pull requests.
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+  
+
+      # Using our custom composite action to run composer checks and composer install.
+      - name: Composer validate and install
+        uses: ./.github/actions/composer
+        id: composer
+        with:
+          php_version: ${{ env.PHP_VERSION }}
+          composer_version: ${{ env.COMPOSER_VERSION }}
+
+      - name: Run PHPStan analysis
+        run: |
+          # Get changed directories under web/modules/custom
+          MODULES=$(git diff --name-only origin/main...HEAD | grep '^web/modules/custom/' | awk -F/ '{print $1"/"$2"/"$3"/"$4}' | sort -u)
+
+          if [ -z "$MODULES" ]; then
+            echo "No custom module changes detected."
+            exit 0
+          fi
+
+          echo "Running PHPStan on modules:"
+          echo "$MODULES"
+
+          # Run PHPStan on each
+          for dir in $MODULES; do
+            if [ -d "$dir" ]; then
+              vendor/bin/phpstan analyse "$dir"
+            fi
+          done        
+
+  run-phpunit:
+    runs-on: ubuntu-latest
+    # Disabling the job for Draft pull requests.
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+
+      # Using our custom composite action to run composer checks and composer install.
+      - name: Composer validate and install
+        uses: ./.github/actions/composer
+        id: composer
+        with:
+          php_version: ${{ env.PHP_VERSION }}
+          composer_version: ${{ env.COMPOSER_VERSION }}
+
+      # We are using phpunit.xml.dist from the project root to determine the directory of the 'Unit' testsuite,
+      # in this case 'tests/Unit'.
+      - name: Run unit tests
+        run: vendor/bin/phpunit --testsuite Unit

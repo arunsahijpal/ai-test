@@ -1,0 +1,4 @@
+name: my-first-drupal11-app-ai
+recipe: drupal11
+config:
+  webroot: web
