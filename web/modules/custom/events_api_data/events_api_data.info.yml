@@ -1,0 +1,5 @@
+name: 'Events API Data'
+type: module
+description: 'Provides an API endpoint to fetch Events content type data.'
+core_version_requirement: ^10 || ^11
+package: Custom
