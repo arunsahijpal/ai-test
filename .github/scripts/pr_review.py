@@ -202,6 +202,7 @@ Review this code and respond with ONLY a JSON array of found issues. For each is
 - concrete code suggestion for improvement
 
 Format EXACTLY like this JSON array, with no other text:
+Respond only with a valid JSON array of objects using double quotes and properly escaped backslashes (\\\\).
 
 [
     {{
@@ -297,9 +298,10 @@ The code to review is from {file_path}:
 
                 for comment in file_comments:
                     line_num = comment['line']
-                    position = line_positions.get(self.find_closest_line(line_num, line_positions))
+                    closest_line = self.find_closest_line(line_num, line_positions)
 
-                    if position is not None and isinstance(position, int):
+                    if closest_line is not None:
+                        position = line_positions[closest_line]
                         comment_key = f"{file.filename}:{position}"
 
                         if comment_key in existing_comments:
