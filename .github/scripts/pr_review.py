@@ -23,10 +23,14 @@ def parse_ai_response(raw_response: str):
     except json.JSONDecodeError:
         try:
             # If direct parsing fails, try to fix common JSON issues
-            # Replace any unescaped backslashes that aren't part of valid escape sequences
-            corrected = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', raw_response)
-            # Handle double-escaped backslashes in controller paths
+            # Handle backslashes in Drupal namespaces and suggestions
+            corrected = raw_response
+            # Fix unescaped backslashes in Drupal namespaces
+            corrected = re.sub(r'(?<!\\)\\(?!["\\/bfnrtu])', r'\\\\', corrected)
+            # Fix double-escaped backslashes in Drupal namespaces
             corrected = re.sub(r'\\\\Drupal', r'\\Drupal', corrected)
+            # Fix unescaped backslashes in suggestions
+            corrected = re.sub(r'(?<!\\)\\(?!["\\/bfnrtu])', r'\\\\', corrected)
             return json.loads(corrected)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse OpenAI's response as JSON: {e}")
@@ -316,7 +320,10 @@ The code to review is from {file_path}:
 
                 for comment in file_comments:
                     line_num = comment['line']
-                    position = line_positions.get(self.find_closest_line(line_num, line_positions))
+                    position = line_positions.get(line_num)  # Try direct line number first
+                    
+                    if position is None:
+                        position = self.find_closest_line(line_num, line_positions)
 
                     if position is not None and isinstance(position, int):
                         comment_key = f"{file.filename}:{position}"
