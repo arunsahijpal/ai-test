@@ -18,14 +18,20 @@ def parse_ai_response(raw_response: str):
     import re
 
     try:
-        # Fix common invalid escapes like \D or \M
-        corrected = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', raw_response)
-
-        return json.loads(corrected)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse OpenAI's response as JSON: {e}")
-        logger.debug(f"Raw response for debugging:\n{raw_response}")
-        return []
+        # First try direct parsing
+        return json.loads(raw_response)
+    except json.JSONDecodeError:
+        try:
+            # If direct parsing fails, try to fix common JSON issues
+            # Replace any unescaped backslashes that aren't part of valid escape sequences
+            corrected = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', raw_response)
+            # Handle double-escaped backslashes in controller paths
+            corrected = re.sub(r'\\\\Drupal', r'\\Drupal', corrected)
+            return json.loads(corrected)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse OpenAI's response as JSON: {e}")
+            logger.debug(f"Raw response for debugging:\n{raw_response}")
+            return []
 
 
 # Set up logging
@@ -123,11 +129,21 @@ class PRReviewer:
         lines = patch.split('\n')
         position = 0
         current_line = 0
+        is_new_file = False
 
         logger.debug(f"Processing patch:\n{patch}")
 
+        # Check if this is a new file
+        if patch.startswith('new file mode'):
+            is_new_file = True
+            logger.debug("Detected new file in patch")
+
         for line in lines:
             position += 1
+
+            # Skip the file mode and index lines for new files
+            if is_new_file and (line.startswith('new file mode') or line.startswith('index')):
+                continue
 
             # Hunk header, extract the new file starting line
             if line.startswith('@@'):
@@ -149,28 +165,26 @@ class PRReviewer:
         logger.debug(f"Line-to-position map: {json.dumps(positions, indent=2)}")
         return positions
 
-
     def find_closest_line(self, target_line: int, positions: Dict[int, int], max_distance: int = 3) -> Optional[int]:
         """
         Find the closest matching line number in the diff position map.
         Only returns a match if it's within `max_distance`.
         """
         if target_line in positions:
-            return target_line
+            return positions[target_line]  # Return the actual position instead of the line number
 
         if not positions:
             logger.debug("No available positions to match against.")
             return None
 
+        # Find the closest line number
         closest_line = min(positions.keys(), key=lambda x: abs(x - target_line))
         if abs(closest_line - target_line) <= max_distance:
             logger.debug(f"Mapped target line {target_line} -> closest line {closest_line} within distance {max_distance}")
-            return closest_line
+            return positions[closest_line]  # Return the position for the closest line
 
         logger.debug(f"No diff line found within {max_distance} of target line {target_line}")
         return None
-
-
 
     def review_code(self, code: str, file_path: str) -> List[Dict]:
         """Send code to OpenAI API for review."""
@@ -202,7 +216,6 @@ Review this code and respond with ONLY a JSON array of found issues. For each is
 - concrete code suggestion for improvement
 
 Format EXACTLY like this JSON array, with no other text:
-Respond only with a valid JSON array of objects using double quotes and properly escaped backslashes (\\\\).
 
 [
     {{
@@ -298,10 +311,9 @@ The code to review is from {file_path}:
 
                 for comment in file_comments:
                     line_num = comment['line']
-                    closest_line = self.find_closest_line(line_num, line_positions)
+                    position = line_positions.get(self.find_closest_line(line_num, line_positions))
 
-                    if closest_line is not None:
-                        position = line_positions[closest_line]
+                    if position is not None and isinstance(position, int):
                         comment_key = f"{file.filename}:{position}"
 
                         if comment_key in existing_comments:
