@@ -23,14 +23,10 @@ def parse_ai_response(raw_response: str):
     except json.JSONDecodeError:
         try:
             # If direct parsing fails, try to fix common JSON issues
-            # Handle backslashes in Drupal namespaces and suggestions
-            corrected = raw_response
-            # Fix unescaped backslashes in Drupal namespaces
-            corrected = re.sub(r'(?<!\\)\\(?!["\\/bfnrtu])', r'\\\\', corrected)
-            # Fix double-escaped backslashes in Drupal namespaces
+            # Replace any unescaped backslashes that aren't part of valid escape sequences
+            corrected = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', raw_response)
+            # Handle double-escaped backslashes in controller paths
             corrected = re.sub(r'\\\\Drupal', r'\\Drupal', corrected)
-            # Fix unescaped backslashes in suggestions
-            corrected = re.sub(r'(?<!\\)\\(?!["\\/bfnrtu])', r'\\\\', corrected)
             return json.loads(corrected)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse OpenAI's response as JSON: {e}")
@@ -141,6 +137,13 @@ class PRReviewer:
         if patch.startswith('new file mode'):
             is_new_file = True
             logger.debug("Detected new file in patch")
+            # For new files, we need to skip the first few lines of the diff header
+            start_index = 0
+            for i, line in enumerate(lines):
+                if line.startswith('@@'):
+                    start_index = i
+                    break
+            lines = lines[start_index:]
 
         for line in lines:
             position += 1
