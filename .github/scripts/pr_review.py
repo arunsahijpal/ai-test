@@ -190,6 +190,11 @@ class PRReviewer:
         """Send code to OpenAI API for review."""
         logger.info(f"Starting code review for: {file_path}")
 
+        # Add line numbers to the code for better context
+        numbered_code = ""
+        for i, line in enumerate(code.split('\n'), 1):
+            numbered_code += f"{i}: {line}\n"
+
         prompt = f"""You are a senior Drupal developer performing a code review on a pull request.
 
 Your task:
@@ -211,7 +216,7 @@ Pay special attention to:
 - Ensure PHPDoc and inline comments are useful and up to date.
 
 Review this code and respond with ONLY a JSON array of found issues. For each issue include:
-- line number
+- line number (use the exact line number from the numbered code below)
 - explanation of the issue
 - concrete code suggestion for improvement
 
@@ -230,7 +235,7 @@ If no issues are found, respond with an empty array: []
 The code to review is from {file_path}:
 
 ```
-{code}
+{numbered_code}
 ```"""
 
         try:
@@ -336,8 +341,6 @@ The code to review is from {file_path}:
                             f"```suggestion\n{comment.get('suggestion', '')}\n```"
                         )
                         general_comments.append(comment_body)
-
-
 
             if draft_review_comments or general_comments or skipped_files:
                 logger.info(f"Creating review with {len(draft_review_comments)} inline and {len(general_comments)} general comments")
