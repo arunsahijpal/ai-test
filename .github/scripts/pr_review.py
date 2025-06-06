@@ -149,24 +149,38 @@ class PRReviewer:
             line_map = {}
             current_line = 0
             position = 0
+            hunk_start = 0
+            hunk_lines = []
             
             for line in file_diff.split('\n'):
                 position += 1
                 
                 if line.startswith('@@'):
+                    # Process previous hunk if exists
+                    if hunk_lines:
+                        for i, hunk_line in enumerate(hunk_lines):
+                            if hunk_line.startswith('+'):
+                                line_map[hunk_start + i] = position - len(hunk_lines) + i
+                    
+                    # Start new hunk
                     match = re.search(r'@@ -\d+(?:,\d+)? \+(\d+)', line)
                     if match:
-                        current_line = int(match.group(1)) - 1
+                        hunk_start = int(match.group(1))
+                        hunk_lines = []
                     continue
                 
                 if line.startswith('+') and not line.startswith('+++'):
-                    current_line += 1
-                    line_map[current_line] = position
+                    hunk_lines.append(line)
                 elif line.startswith('-') and not line.startswith('---'):
                     continue
                 else:
-                    current_line += 1
-                    line_map[current_line] = position
+                    hunk_lines.append(line)
+
+            # Process the last hunk
+            if hunk_lines:
+                for i, hunk_line in enumerate(hunk_lines):
+                    if hunk_line.startswith('+'):
+                        line_map[hunk_start + i] = position - len(hunk_lines) + i
 
             logger.debug(f"Line map for {file_path}: {line_map}")
             return line_map
@@ -314,14 +328,35 @@ The code to review is from {file_path}:
                             logger.debug(f"Duplicate comment skipped at {comment_key}")
                             continue
 
-                        comment_body = f"{comment['comment']}\n\n```suggestion\n{comment.get('suggestion', '')}\n```"
+                        # Get the diff hunk for this position
+                        hunk = None
+                        for line in file.patch.split('\n'):
+                            if line.startswith('@@'):
+                                hunk = line
+                                break
 
-                        draft_review_comments.append({
-                            'path': file.filename,
-                            'position': position,
-                            'body': comment_body
-                        })
-                        logger.debug(f"Queued inline comment at position {position} for {file.filename}")
+                        if hunk:
+                            comment_body = f"{comment['comment']}\n\n```suggestion\n{comment.get('suggestion', '')}\n```"
+
+                            draft_review_comments.append({
+                                'path': file.filename,
+                                'position': position,
+                                'body': comment_body,
+                                'commit_id': self.pull_request.head.sha,
+                                'line': line_num,
+                                'side': 'RIGHT',
+                                'start_line': line_num,
+                                'start_side': 'RIGHT'
+                            })
+                            logger.debug(f"Queued inline comment at position {position} for {file.filename}")
+                        else:
+                            logger.warning(f"No diff hunk found for line {line_num} in {file.filename}, adding as general comment")
+                            comment_body = (
+                                f"**In file `{file.filename}`, line {line_num}:**\n\n"
+                                f"{comment['comment']}\n\n"
+                                f"```suggestion\n{comment.get('suggestion', '')}\n```"
+                            )
+                            general_comments.append(comment_body)
                     else:
                         logger.warning(f"Invalid or unmappable line {line_num} in {file.filename}, adding as general comment")
                         comment_body = (
@@ -356,14 +391,21 @@ The code to review is from {file_path}:
 
                 commit = self.repo.get_commit(self.pull_request.head.sha)
                 logger.debug(f"Inline comment payload: {json.dumps(draft_review_comments, indent=2)}")
-                self.pull_request.create_review(
-                    commit=commit,
-                    comments=draft_review_comments,
-                    body=review_body,
-                    event="COMMENT"
-                )
-                logger.info("Review created successfully")
-                logger.debug(f"Inline comment payload: {json.dumps(draft_review_comments, indent=2)}")
+                
+                try:
+                    self.pull_request.create_review(
+                        commit=commit,
+                        comments=draft_review_comments,
+                        body=review_body,
+                        event="COMMENT"
+                    )
+                    logger.info("Review created successfully")
+                except Exception as e:
+                    logger.error(f"Error creating review: {e}")
+                    # If review creation fails, try to create a comment instead
+                    if general_comments:
+                        self.pull_request.create_issue_comment(review_body)
+                        logger.info("Created issue comment as fallback")
             else:
                 logger.info("No review comments generated")
 
