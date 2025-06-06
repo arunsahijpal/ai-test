@@ -340,15 +340,14 @@ The code to review is from {file_path}:
 
                             draft_review_comments.append({
                                 'path': file.filename,
-                                'position': position,
                                 'body': comment_body,
-                                'commit_id': self.pull_request.head.sha,
                                 'line': line_num,
                                 'side': 'RIGHT',
                                 'start_line': line_num,
-                                'start_side': 'RIGHT'
+                                'start_side': 'RIGHT',
+                                'in_reply_to': None
                             })
-                            logger.debug(f"Queued inline comment at position {position} for {file.filename}")
+                            logger.debug(f"Queued inline comment at line {line_num} for {file.filename}")
                         else:
                             logger.warning(f"No diff hunk found for line {line_num} in {file.filename}, adding as general comment")
                             comment_body = (
@@ -393,12 +392,15 @@ The code to review is from {file_path}:
                 logger.debug(f"Inline comment payload: {json.dumps(draft_review_comments, indent=2)}")
                 
                 try:
-                    self.pull_request.create_review(
-                        commit=commit,
-                        comments=draft_review_comments,
-                        body=review_body,
-                        event="COMMENT"
-                    )
+                    # Create the review with the correct structure
+                    review = {
+                        'commit_id': commit.sha,
+                        'body': review_body,
+                        'event': 'COMMENT',
+                        'comments': draft_review_comments
+                    }
+                    
+                    self.pull_request.create_review(**review)
                     logger.info("Review created successfully")
                 except Exception as e:
                     logger.error(f"Error creating review: {e}")
