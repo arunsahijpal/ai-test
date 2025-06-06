@@ -16,6 +16,14 @@ def parse_ai_response(raw_response: str):
     Safely parses OpenAI response to JSON, fixing common issues like unescaped backslashes.
     """
     import re
+    import json
+
+    def clean_json_string(s):
+        # First, handle Drupal namespaces
+        s = re.sub(r'\\Drupal', r'\\\\Drupal', s)
+        # Then handle other backslashes
+        s = re.sub(r'(?<!\\)\\(?!["\\/bfnrtu])', r'\\\\', s)
+        return s
 
     try:
         # First try direct parsing
@@ -23,10 +31,7 @@ def parse_ai_response(raw_response: str):
     except json.JSONDecodeError:
         try:
             # If direct parsing fails, try to fix common JSON issues
-            # Replace any unescaped backslashes that aren't part of valid escape sequences
-            corrected = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', raw_response)
-            # Handle double-escaped backslashes in controller paths
-            corrected = re.sub(r'\\\\Drupal', r'\\Drupal', corrected)
+            corrected = clean_json_string(raw_response)
             return json.loads(corrected)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse OpenAI's response as JSON: {e}")
@@ -120,78 +125,55 @@ class PRReviewer:
         logger.debug(f"Found {len(existing)} existing comments: {existing}")
         return existing
 
-    def calculate_line_positions(self, patch: str) -> Dict[int, int]:
+    def get_file_line_map(self, file_path: str) -> Dict[int, int]:
         """
-        Map new file line numbers to diff positions, counting all diff lines for position,
-        but only tracking lines that are visible in the new version (context or additions).
+        Get a mapping of file line numbers to diff positions using GitHub's API.
         """
-        positions = {}
-        lines = patch.split('\n')
-        position = 0
-        current_line = 0
-        is_new_file = False
-
-        logger.debug(f"Processing patch:\n{patch}")
-
-        # Check if this is a new file
-        if patch.startswith('new file mode'):
-            is_new_file = True
-            logger.debug("Detected new file in patch")
-            # For new files, we need to skip the first few lines of the diff header
-            start_index = 0
-            for i, line in enumerate(lines):
-                if line.startswith('@@'):
-                    start_index = i
+        try:
+            # Get the file content at the PR's head commit
+            content = self.repo.get_contents(file_path, ref=self.pull_request.head.sha)
+            file_lines = content.decoded_content.decode('utf-8').split('\n')
+            
+            # Get the diff for this file
+            file_diff = None
+            for file in self.pull_request.get_files():
+                if file.filename == file_path:
+                    file_diff = file.patch
                     break
-            lines = lines[start_index:]
+            
+            if not file_diff:
+                logger.warning(f"No diff found for {file_path}")
+                return {}
 
-        for line in lines:
-            position += 1
+            # Parse the diff to get line positions
+            line_map = {}
+            current_line = 0
+            position = 0
+            
+            for line in file_diff.split('\n'):
+                position += 1
+                
+                if line.startswith('@@'):
+                    match = re.search(r'@@ -\d+(?:,\d+)? \+(\d+)', line)
+                    if match:
+                        current_line = int(match.group(1)) - 1
+                    continue
+                
+                if line.startswith('+') and not line.startswith('+++'):
+                    current_line += 1
+                    line_map[current_line] = position
+                elif line.startswith('-') and not line.startswith('---'):
+                    continue
+                else:
+                    current_line += 1
+                    line_map[current_line] = position
 
-            # Skip the file mode and index lines for new files
-            if is_new_file and (line.startswith('new file mode') or line.startswith('index')):
-                continue
+            logger.debug(f"Line map for {file_path}: {line_map}")
+            return line_map
 
-            # Hunk header, extract the new file starting line
-            if line.startswith('@@'):
-                match = re.search(r'@@ -\d+(?:,\d+)? \+(\d+)', line)
-                if match:
-                    current_line = int(match.group(1)) - 1  # Adjust before increment
-                continue
-
-            if line.startswith('+') and not line.startswith('+++'):
-                current_line += 1
-                positions[current_line] = position
-            elif line.startswith('-') and not line.startswith('---'):
-                continue  # Old line, not present in new file
-            else:
-                # Context line
-                current_line += 1
-                positions[current_line] = position
-
-        logger.debug(f"Line-to-position map: {json.dumps(positions, indent=2)}")
-        return positions
-
-    def find_closest_line(self, target_line: int, positions: Dict[int, int], max_distance: int = 3) -> Optional[int]:
-        """
-        Find the closest matching line number in the diff position map.
-        Only returns a match if it's within `max_distance`.
-        """
-        if target_line in positions:
-            return positions[target_line]  # Return the actual position instead of the line number
-
-        if not positions:
-            logger.debug("No available positions to match against.")
-            return None
-
-        # Find the closest line number
-        closest_line = min(positions.keys(), key=lambda x: abs(x - target_line))
-        if abs(closest_line - target_line) <= max_distance:
-            logger.debug(f"Mapped target line {target_line} -> closest line {closest_line} within distance {max_distance}")
-            return positions[closest_line]  # Return the position for the closest line
-
-        logger.debug(f"No diff line found within {max_distance} of target line {target_line}")
-        return None
+        except Exception as e:
+            logger.error(f"Error getting line map for {file_path}: {e}")
+            return {}
 
     def review_code(self, code: str, file_path: str) -> List[Dict]:
         """Send code to OpenAI API for review."""
@@ -314,21 +296,18 @@ The code to review is from {file_path}:
                     logger.warning(f"No patch found for {file.filename}, skipping inline comments")
                     continue
 
-                # Calculate line positions once per file
-                line_positions = self.calculate_line_positions(file.patch)
-                logger.debug(f"Line positions map for {file.filename}: {line_positions}")
+                # Get line map for this file
+                line_map = self.get_file_line_map(file.filename)
+                logger.debug(f"Line map for {file.filename}: {line_map}")
 
                 # Get review comments from OpenAI or other LLM
                 file_comments = self.review_code(content, file.filename)
 
                 for comment in file_comments:
                     line_num = comment['line']
-                    position = line_positions.get(line_num)  # Try direct line number first
-                    
-                    if position is None:
-                        position = self.find_closest_line(line_num, line_positions)
+                    position = line_map.get(line_num)
 
-                    if position is not None and isinstance(position, int):
+                    if position is not None:
                         comment_key = f"{file.filename}:{position}"
 
                         if comment_key in existing_comments:
