@@ -399,12 +399,17 @@ The code to review is from {file_path}:
                         'comments': [{
                             'path': comment['path'],
                             'body': comment['body'],
-                            'position': comment['line'],
                             'line': comment['line']
                         } for comment in draft_review_comments]
                     }
                     
-                    self.pull_request.create_review(**review)
+                    # Create review using the raw API endpoint
+                    review_url = f"/repos/{self.repository}/pulls/{self.pr_number}/reviews"
+                    self.github._Github__requester.requestJsonAndCheck(
+                        "POST",
+                        review_url,
+                        input=review
+                    )
                     logger.info("Review created successfully")
                 except Exception as e:
                     logger.error(f"Error creating review: {e}")
