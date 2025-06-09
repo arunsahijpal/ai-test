@@ -394,10 +394,14 @@ The code to review is from {file_path}:
                 try:
                     # Create the review with the correct structure
                     review = {
-                        'commit_id': commit.sha,
                         'body': review_body,
                         'event': 'COMMENT',
-                        'comments': draft_review_comments
+                        'comments': [{
+                            'path': comment['path'],
+                            'body': comment['body'],
+                            'position': comment['line'],
+                            'line': comment['line']
+                        } for comment in draft_review_comments]
                     }
                     
                     self.pull_request.create_review(**review)
