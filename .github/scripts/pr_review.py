@@ -392,16 +392,23 @@ The code to review is from {file_path}:
                 logger.debug(f"Inline comment payload: {json.dumps(draft_review_comments, indent=2)}")
                 
                 try:
+                    # Transform draft_review_comments into the correct format
+                    review_comments = []
+                    for comment in draft_review_comments:
+                        review_comments.append({
+                            'path': comment['path'],
+                            'body': comment['body'],
+                            'line': comment['line']
+                        })
+
                     # Create the review with the correct structure
                     review = {
                         'body': review_body,
                         'event': 'COMMENT',
-                        'comments': [{
-                            'path': comment['path'],
-                            'body': comment['body'],
-                            'line': comment['line']
-                        } for comment in draft_review_comments]
+                        'comments': review_comments
                     }
+                    
+                    logger.debug(f"Review payload: {json.dumps(review, indent=2)}")
                     
                     # Create review using the raw API endpoint
                     review_url = f"/repos/{self.repository}/pulls/{self.pr_number}/reviews"
