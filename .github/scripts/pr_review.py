@@ -395,11 +395,14 @@ The code to review is from {file_path}:
                     # Transform draft_review_comments into the correct format
                     review_comments = []
                     for comment in draft_review_comments:
-                        review_comments.append({
+                        # Only include the required fields
+                        review_comment = {
                             'path': comment['path'],
                             'body': comment['body'],
                             'line': comment['line']
-                        })
+                        }
+                        review_comments.append(review_comment)
+                        logger.debug(f"Transformed comment: {json.dumps(review_comment, indent=2)}")
 
                     # Create the review with the correct structure
                     review = {
@@ -408,16 +411,17 @@ The code to review is from {file_path}:
                         'comments': review_comments
                     }
                     
-                    logger.debug(f"Review payload: {json.dumps(review, indent=2)}")
+                    logger.debug(f"Final review payload: {json.dumps(review, indent=2)}")
                     
                     # Create review using the raw API endpoint
                     review_url = f"/repos/{self.repository}/pulls/{self.pr_number}/reviews"
-                    self.github._Github__requester.requestJsonAndCheck(
+                    response = self.github._Github__requester.requestJsonAndCheck(
                         "POST",
                         review_url,
                         input=review
                     )
                     logger.info("Review created successfully")
+                    logger.debug(f"Review response: {json.dumps(response, indent=2)}")
                 except Exception as e:
                     logger.error(f"Error creating review: {e}")
                     # If review creation fails, try to create a comment instead
