@@ -67,7 +67,7 @@ class EventsApiController extends ControllerBase {
    * @return \Symfony\Component\HttpFoundation\JsonResponse
    *   The JSON response with events data.
    */
-  public function getEvents(Request $request) {
+  public function getEventsData(Request $request) {
     $query = \Drupal::entityQuery('node')
       ->condition('type', 'product')
       ->condition('status', 1)
