@@ -2,3 +2,14 @@ name: my-first-drupal11-app-ai
 recipe: drupal11
 config:
   webroot: web
+tooling:
+  phpcs:
+      service: appserver
+      cmd: "/app/vendor/bin/phpcs --standard=Drupal,DrupalPractice --extensions=php,module,inc,install,test,profile,theme,css,info,txt,md,yml,js "
+      options:
+      description: 'Run phpcs for given folder or file.'
+  phpcbf:
+      service: appserver
+      cmd: "/app/vendor/bin/phpcbf --standard=Drupal,DrupalPractice --extensions=php,module,inc,install,test,profile,theme,css,info,txt,md,yml,js "
+      options:
+      description: 'Fixes the coding standards as much it can.'
