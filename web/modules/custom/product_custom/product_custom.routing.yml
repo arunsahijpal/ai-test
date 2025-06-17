@@ -1,0 +1,7 @@
+product_custom.thank_you_page:
+  path: '/thank-you'
+  defaults:
+    _controller: '\Drupal\product_custom\Controller\ProductCustomController::thankYou'
+    _title: 'Thank You'
+  requirements:
+    _permission: 'product_custom'
