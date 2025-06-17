@@ -1,0 +1,5 @@
+name: 'product_custom'
+type: module
+description: 'product'
+package: Custom
+core_version_requirement: ^10 || ^11

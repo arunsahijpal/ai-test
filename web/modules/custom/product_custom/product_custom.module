@@ -1,0 +1,53 @@
+<?php
+
+use Drupal\Core\Url;
+
+/**
+ * Implements hook_preprocess_node().
+ */
+function product_custom_preprocess_node(array &$variables) {
+  // Check if the current node is of type 'product'.
+  if ($variables['node']->getType() == 'product') {
+    $node = $variables['node'];
+    $product_id = $node->id();
+    $user_name = \Drupal::currentUser()->getDisplayName(); // Get the current user's name.
+
+    // Create a 'Buy Now' button link render array with query parameters.
+    $buy_now_button = [
+      '#type' => 'link',
+      '#title' => t('Buy Now'),
+      '#url' => Url::fromRoute('product_custom.thank_you_page', [], [
+        'query' => [
+          'product_id' => $product_id,
+          'user_name' => $user_name,
+        ],
+      ]),
+      '#attributes' => ['class' => ['button', 'buy-now-button']],
+    ];
+    
+    // Add the 'Buy Now' button to the content array with proper weight.
+    $variables['content']['buy_now_button'] = [
+      '#type' => 'container',
+      'button' => $buy_now_button,
+      '#weight' => 100,  // Ensure it appears after the 'Add to Cart' button.
+    ];
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function product_custom_theme($existing, $type, $theme, $path) {
+  return [
+    'item_thank_you_page' => [
+      'variables' => [
+        'item_name' => NULL,
+        'item_image' => NULL,
+        'user_name' => NULL,
+        'quantity' => NULL,
+      ],
+      'template' => 'item-thank-you-page', // Name of the Twig template.
+    ],
+  ];
+}
+
