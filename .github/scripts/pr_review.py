@@ -1,7 +1,6 @@
 import os
 import sys
 from typing import List, Dict, Optional
-from openai import OpenAI
 from github import Github
 import base64
 import json
@@ -84,10 +83,50 @@ class FileFilterConfig:
         logger.debug(f"File {filename} did not match any whitelist patterns")
         return False
 
+class LLMClient:
+    def review_code(self, code: str, file_path: str) -> List[Dict]:
+        raise NotImplementedError
+
+class OpenAIClient(LLMClient):
+    def __init__(self, api_key):
+        from openai import OpenAI
+        self.client = OpenAI(api_key=api_key)
+    def review_code(self, code, file_path):
+        logger.info(f"Starting code review for: {file_path}")
+        numbered_code = ""
+        for i, line in enumerate(code.split('\n'), 1):
+            numbered_code += f"{i}: {line}\n"
+        prompt = f"""You are a senior Drupal developer performing a code review on a pull request.\n\nYour task:\n- Identify code issues, potential bugs, and improvements.\n- Follow official Drupal coding standards: https://www.drupal.org/docs/develop/standards\n- Be constructive and helpful. Focus on **critical** or **architecturally important** improvements.\n- Do **not** flag minor style issues unless they impact readability or maintainability.\n- Respond in clear, actionable language.\n\nPay special attention to:\n- Proper use of Drupal APIs (e.g., Entity API, Form API, Routing, Render Arrays)\n- Service usage: Use dependency injection where possible, avoid using \\Drupal::service() directly unless within procedural code.\n- Security best practices: Never concatenate SQL directly; use the database API or entity queries.\n- YAML files: Validate config/schema format. Ensure permissions and routing definitions are properly declared.\n- Twig templates: Sanitize output using `|escape`, use `t()` for strings where necessary.\n- Naming conventions: Ensure classes, functions, services, and hooks are named consistently with Drupal standards.\n- Avoid hardcoded strings or IDs. Use constants or configuration.\n- Do not repeat logic that already exists in Drupal core/contrib.\n- Ensure PHPDoc and inline comments are useful and up to date.\n\nReview this code and respond with ONLY a JSON array of found issues. For each issue include:\n- line number (use the exact line number from the numbered code below)\n- explanation of the issue\n- concrete code suggestion for improvement\n\nFormat EXACTLY like this JSON array, with no other text:\n\n[\n    {{\n        \"line\": 1,\n        \"comment\": \"Description of the issue and why it should be improved\",\n        \"suggestion\": \"The exact code that should replace this line\"\n    }}\n]\n\nIf no issues are found, respond with an empty array: []\n\nThe code to review is from {file_path}:\n\n```\n{numbered_code}\n```"""
+        try:
+            logger.debug("Sending request to OpenAI API")
+            response = self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a senior software engineer performing a code review. ..."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,
+                max_tokens=3000,
+            )
+            response_text = response.choices[0].message.content
+            logger.debug(f"OpenAI API raw response: {response_text}")
+            try:
+                review_comments = parse_ai_response(response_text)
+                if not isinstance(review_comments, list):
+                    logger.error("OpenAI's response is not a JSON array")
+                    return []
+                logger.info(f"Successfully parsed {len(review_comments)} review comments")
+                return review_comments
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse OpenAI's response as JSON: {e}")
+                return []
+        except Exception as e:
+            logger.error(f"Error during code review: {e}")
+            return []
+
 class PRReviewer:
     def __init__(self):
         self.github_token = os.environ["GITHUB_TOKEN"]
-        self.openai_key = os.environ["OPENAI_API_KEY"]
         self.event_path = os.environ["GITHUB_EVENT_PATH"]
         self.repository = os.environ["GITHUB_REPOSITORY"]
 
@@ -97,7 +136,12 @@ class PRReviewer:
         logger.info(f"Initialized with blacklist: {self.file_filter.blacklist_patterns}")
 
         # Initialize API clients
-        self.openai_client = OpenAI(api_key=self.openai_key)
+        llm_provider = os.getenv("LLM_PROVIDER", "openai").lower()
+        if llm_provider == "openai":
+            self.llm_client = OpenAIClient(os.environ["OPENAI_API_KEY"])
+        else:
+            logger.error(f"Unsupported LLM provider: {llm_provider}")
+            raise ValueError(f"Unsupported LLM provider: {llm_provider}")
         self.github = Github(self.github_token)
 
         # Load PR event data
@@ -190,88 +234,8 @@ class PRReviewer:
             return {}
 
     def review_code(self, code: str, file_path: str) -> List[Dict]:
-        """Send code to OpenAI API for review."""
-        logger.info(f"Starting code review for: {file_path}")
-
-        # Add line numbers to the code for better context
-        numbered_code = ""
-        for i, line in enumerate(code.split('\n'), 1):
-            numbered_code += f"{i}: {line}\n"
-
-        prompt = f"""You are a senior Drupal developer performing a code review on a pull request.
-
-Your task:
-- Identify code issues, potential bugs, and improvements.
-- Follow official Drupal coding standards: https://www.drupal.org/docs/develop/standards
-- Be constructive and helpful. Focus on **critical** or **architecturally important** improvements.
-- Do **not** flag minor style issues unless they impact readability or maintainability.
-- Respond in clear, actionable language.
-
-Pay special attention to:
-- Proper use of Drupal APIs (e.g., Entity API, Form API, Routing, Render Arrays)
-- Service usage: Use dependency injection where possible, avoid using \Drupal::service() directly unless within procedural code.
-- Security best practices: Never concatenate SQL directly; use the database API or entity queries.
-- YAML files: Validate config/schema format. Ensure permissions and routing definitions are properly declared.
-- Twig templates: Sanitize output using `|escape`, use `t()` for strings where necessary.
-- Naming conventions: Ensure classes, functions, services, and hooks are named consistently with Drupal standards.
-- Avoid hardcoded strings or IDs. Use constants or configuration.
-- Do not repeat logic that already exists in Drupal core/contrib.
-- Ensure PHPDoc and inline comments are useful and up to date.
-
-Review this code and respond with ONLY a JSON array of found issues. For each issue include:
-- line number (use the exact line number from the numbered code below)
-- explanation of the issue
-- concrete code suggestion for improvement
-
-Format EXACTLY like this JSON array, with no other text:
-
-[
-    {{
-        "line": 1,
-        "comment": "Description of the issue and why it should be improved",
-        "suggestion": "The exact code that should replace this line"
-    }}
-]
-
-If no issues are found, respond with an empty array: []
-
-The code to review is from {file_path}:
-
-```
-{numbered_code}
-```"""
-
-        try:
-            logger.debug("Sending request to OpenAI API")
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a senior software engineer performing a code review. ..."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                max_tokens=3000,
-            )
-            response_text = response.choices[0].message.content
-
-            logger.debug(f"OpenAI API raw response: {response_text}")
-
-            try:
-                review_comments = parse_ai_response(response_text)
-                if not isinstance(review_comments, list):
-                    logger.error("OpenAI's response is not a JSON array")
-                    return []
-
-                logger.info(f"Successfully parsed {len(review_comments)} review comments")
-                return review_comments
-
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse OpenAI's response as JSON: {e}")
-                return []
-
-        except Exception as e:
-            logger.error(f"Error during code review: {e}")
-            return []
+        """Send code to LLM API for review."""
+        return self.llm_client.review_code(code, file_path)
 
     def run_review(self):
         """Main method to run the PR review process."""
