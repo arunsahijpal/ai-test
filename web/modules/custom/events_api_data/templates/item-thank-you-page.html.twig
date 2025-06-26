@@ -1,0 +1,11 @@
+<div class="thank-you-page">
+  <h1>Dear, {{ user_name }}!</h1>
+  <p>Thank you for purchasing the following item:</p>
+  <div class="item-details">
+    <h2>{{ item_name }}</h2>
+    {% if item_image %}
+      <img src="{{ item_image }}" alt="{{ item_name }}">
+    {% endif %}
+    <p>Quantity: {{ quantity }}</p>
+  </div>
+</div>
